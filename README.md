@@ -85,7 +85,8 @@ text and an id.
 
 Measured on the live deploy: median latency ~260ms for eight questions, about
 850 input tokens per post, output tokens free. At three posts a second that is
-roughly $0.03 an hour of Jev while someone is watching, and the Worker and
+roughly $0.40 an hour of Jev while someone is watching, about $1.60 a day for
+the idle trickle, and the Worker and
 Durable Object stay inside Cloudflare's $5 plan.
 
 ## License
