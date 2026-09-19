@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cloutmetrics.ai</title>
+<meta name="description" content="Live intent analysis of the Bluesky firehose. Every post judged in ~300ms by a calibrated System One model. Uncertain calls go to the human lane.">
+<meta property="og:title" content="cloutmetrics.ai — the firehose, judged live">
+<meta property="og:description" content="Every Bluesky post scored on intent, topic, tone, bait, hostility, sarcasm and bot-ness in one ~300ms call. Watch the model admit when it isn't sure.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://cloutmetrics.ai/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23f59e0b'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="dot" id="live-dot"></span>
+    <h1>cloutmetrics<span class="tld">.ai</span></h1>
+    <span class="sub">the Bluesky firehose, judged live by <a href="https://typesafe.ai" target="_blank" rel="noopener">Jev</a> <span id="model"></span></span>
+  </div>
+  <div class="stats">
+    <div class="stat big"><div class="v" id="s-judged">0</div><div class="k">posts judged</div></div>
+    <div class="stat"><div class="v"><span id="s-latency">–</span><small>ms</small></div><div class="k">median latency</div></div>
+    <div class="stat"><div class="v"><small>$</small><span id="s-cost">0.0000</span></div><div class="k">total spend</div></div>
+    <div class="stat"><div class="v"><span id="s-review">0</span><small>%</small></div><div class="k">sent to a human</div></div>
+    <div class="stat"><div class="v" id="s-rate">–</div><div class="k">judged / firehose</div></div>
+    <div class="stat"><div class="v" id="s-viewers">1</div><div class="k">watching</div></div>
+  </div>
+</header>
+
+<section class="hist" id="hist"></section>
+
+<main>
+  <section class="lane" id="feed-lane">
+    <h2>judged <span class="hint">8 typed answers per post, one call</span></h2>
+    <div class="cards" id="feed"></div>
+  </section>
+  <section class="lane review" id="review-lane">
+    <h2>needs a human <span class="hint" id="threshold">the model would not commit on a question</span></h2>
+    <div class="cards" id="review"></div>
+  </section>
+</main>
+
+<footer>
+  <span id="status">connecting…</span>
+  <span>only runs while someone is watching · en posts, sampled · nsfw dropped server-side</span>
+  <a href="https://github.com/ragelink/firehose-judge" target="_blank" rel="noopener">source</a>
+</footer>
+<script src="/app.js"></script>
+</body>
+</html>

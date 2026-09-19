@@ -1,0 +1,62 @@
+{
+  "intent": {
+    "type": "choice",
+    "instructions": "What is the poster primarily trying to do?",
+    "criteria": {
+      "ask": "Asking a question or requesting help/recommendations",
+      "opine": "Sharing an opinion, take, or reaction",
+      "inform": "Reporting news, facts, or a personal life update",
+      "promote": "Selling, promoting, or linking to their own work",
+      "banter": "Joking around or casual chatter",
+      "vent": "Complaining or venting frustration",
+      "support": "Seeking or offering emotional support"
+    }
+  },
+  "topic": {
+    "type": "choice",
+    "instructions": "Main subject of the post",
+    "criteria": {
+      "politics": "Politics, government, elections, policy",
+      "tech": "Technology, software, gadgets",
+      "ai": "Artificial intelligence, LLMs, machine learning",
+      "sports": "Sports and athletes",
+      "entertainment": "Film, TV, music, games, celebrities, fandom",
+      "art": "Art, writing, photography, creative work",
+      "personal": "Daily life, relationships, feelings, health",
+      "business": "Work, careers, money, markets",
+      "science": "Science, nature, weather, space",
+      "other": "None of the above"
+    }
+  },
+  "sentiment": {
+    "type": "score",
+    "instructions": "Overall emotional tone of the post",
+    "criteria": ["Very negative", "Negative", "Neutral", "Positive", "Very positive"]
+  },
+  "bait": {
+    "type": "score",
+    "instructions": "How hard is this post fishing for engagement?",
+    "criteria": [
+      "Just talking, no hook",
+      "Mild hook or call to action",
+      "Deliberate engagement bait",
+      "Full ragebait or outrage farming"
+    ]
+  },
+  "hostile": {
+    "type": "noul",
+    "instructions": "The post insults, attacks, or expresses contempt for a person or group"
+  },
+  "sarcasm": {
+    "type": "noul",
+    "instructions": "The post is sarcastic or ironic; it means something other than its literal text"
+  },
+  "bot": {
+    "type": "noul",
+    "instructions": "The post reads like automated or templated output (bot, feed relay, spam) rather than a human typing"
+  },
+  "nsfw": {
+    "type": "noul",
+    "instructions": "The post contains sexual content, slurs, graphic violence, or other material unsuitable for display on a public screen"
+  }
+}

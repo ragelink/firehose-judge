@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "firehose-judge",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "durable_objects": {
+    "bindings": [{ "name": "FIREHOSE", "class_name": "Firehose" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Firehose"] }],
+  "vars": {
+    // Posts per second sampled from the firehose and sent to Jev while at least one viewer is connected.
+    "JUDGE_RATE_PER_SEC": "3",
+    "MAX_INFLIGHT": "8",
+    "JETSTREAM_URL": "https://jetstream2.us-east.bsky.network/subscribe?wantedCollections=app.bsky.feed.post",
+    "TYPESAFE_URL": "https://api.typesafe.ai/v1/systemone",
+    "TYPESAFE_MODEL": "jev-latest",
+    // USD per million input tokens; output tokens are free.
+    "PRICE_PER_M_INPUT": "0.042"
+  },
+  "observability": { "enabled": true }
+}
