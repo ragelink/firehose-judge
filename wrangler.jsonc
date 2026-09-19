@@ -11,9 +11,9 @@
   "r2_buckets": [{ "binding": "ARCHIVE", "bucket_name": "cloutmetrics-archive" }],
   "vars": {
     // Posts per second sampled from the firehose and sent to Jev while at least one viewer is connected.
-    "JUDGE_RATE_PER_SEC": "3",
+    "JUDGE_RATE_PER_SEC": "0",
     // Posts per second sampled while nobody is watching, so trends keep accumulating. 0 pauses the firehose when idle.
-    "IDLE_RATE_PER_SEC": "0.5",
+    "IDLE_RATE_PER_SEC": "0",
     "MAX_INFLIGHT": "8",
     "JETSTREAM_URL": "https://jetstream2.us-east.bsky.network/subscribe?wantedCollections=app.bsky.feed.post",
     "TYPESAFE_URL": "https://api.typesafe.ai/v1/systemone",

@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cloutmetrics.ai</title>
+<meta name="description" content="Live control panel for the Bluesky firehose. Every sampled post judged in ~250ms by a calibrated System One model: intent, topic, tone, bait, hostility, sarcasm, bots. What's hot, what's not, and where the model isn't sure.">
+<meta property="og:title" content="cloutmetrics.ai — clout on the wire">
+<meta property="og:description" content="The Bluesky firehose judged live: a mood barometer, trending terms, a co-occurrence graph, and a lane for everything the model wasn't sure about.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://cloutmetrics.ai/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23c98500'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="dot" id="live-dot"></span>
+    <h1>cloutmetrics<span class="tld">.ai</span></h1>
+    <span class="sub">the Bluesky firehose, judged live by <a href="https://typesafe.ai" target="_blank" rel="noopener">Jev</a> <span id="model"></span></span>
+    <span class="status" id="status">connecting…</span>
+  </div>
+  <div class="stats">
+    <div class="stat big"><div class="v" id="s-judged">0</div><div class="k">posts judged</div></div>
+    <div class="stat"><div class="v"><span id="s-latency">–</span><small>ms</small></div><div class="k">median latency</div></div>
+    <div class="stat"><div class="v"><small>$</small><span id="s-cost">0.00</span></div><div class="k">total spend</div></div>
+    <div class="stat dual" id="stat-budget" hidden><div class="v"><small>$</small><span id="s-spent">0.00</span><small>of $</small><span id="s-cap">–</span></div><div class="k">24h spend / cap</div></div>
+    <div class="stat"><div class="v"><span id="s-review">0</span><small>%</small></div><div class="k">sent to a human</div></div>
+    <div class="stat"><div class="v" id="s-votes">0</div><div class="k">human votes</div></div>
+    <div class="stat"><div class="v" id="s-rate">–</div><div class="k">sampling</div></div>
+    <div class="stat"><div class="v" id="s-viewers">1</div><div class="k">watching</div></div>
+  </div>
+</header>
+
+<div class="layout">
+<main class="panel">
+  <section class="tile baro-tile">
+    <h2>mood barometer <span class="hint">last 3 min · tick = 24h average</span></h2>
+    <canvas id="baro" width="600" height="220"></canvas>
+    <div class="baro-labels" id="baro-labels"></div>
+  </section>
+
+  <section class="tile">
+    <h2>intent <span class="hint">last 10 min vs 24h</span></h2>
+    <div class="hbars" id="bars-intent"></div>
+  </section>
+
+  <section class="tile">
+    <h2>topic <span class="hint">last 10 min vs 24h</span></h2>
+    <div class="hbars" id="bars-topic"></div>
+  </section>
+
+  <section class="tile fund-tile" id="fund-tile" hidden>
+    <h2>keep the firehose on <span class="hint">contributions vs. cost</span></h2>
+    <div class="fund" id="fund"></div>
+  </section>
+
+  <section class="tile backers-tile" id="backers-tile" hidden>
+    <h2>clout leaderboard <span class="hint">who is paying for the stream this month</span></h2>
+    <div class="backers" id="backers"></div>
+  </section>
+
+  <section class="tile wide">
+    <h2>last hour <span class="hint">intent mix per minute</span></h2>
+    <div class="chart" id="trend-intent"></div>
+    <div class="legend" id="legend-intent"></div>
+  </section>
+
+  <section class="tile wide">
+    <h2>signals <span class="hint">per-minute mean, 0–1 (bait /3, sentiment /4)</span></h2>
+    <div class="chart" id="trend-signals"></div>
+    <div class="legend" id="legend-signals"></div>
+  </section>
+
+  <section class="tile wide cloud-tile">
+    <h2>on the wire <span class="hint">terms in the last 15 min · tint = burst vs trailing 6h · posts the model calls bots excluded</span></h2>
+    <div class="cloud" id="cloud"></div>
+  </section>
+
+  <section class="tile graph-tile">
+    <h2>co-occurrence <span class="hint">terms that travel together, last hour</span></h2>
+    <svg id="graph" viewBox="0 0 480 360" preserveAspectRatio="xMidYMid meet"></svg>
+  </section>
+
+  <section class="tile">
+    <h2>peak clout <span class="hint">highest bait + hostility, last hour</span></h2>
+    <ol class="wire" id="wire"></ol>
+  </section>
+
+  <section class="tile wide perf-tile">
+    <h2>baseline performance <span class="hint">last 24h distributions · p50 / p90 / p99</span></h2>
+    <div class="perf" id="perf"></div>
+  </section>
+
+  <section class="tile wide curve-tile" id="curve-tile" hidden>
+    <h2>operating curve <span class="hint">where the line between the model and a human can sit · last 24h</span></h2>
+    <div class="chart" id="curve"></div>
+    <div class="legend" id="legend-curve"></div>
+    <div class="curve-ctl">
+      <label for="curve-slider">review share target</label>
+      <input id="curve-slider" type="range" min="0" max="100" step="1" value="0">
+      <span class="pick" id="curve-pick"></span>
+    </div>
+  </section>
+
+  <section class="tile savings-tile">
+    <h2>what a human lane saves <span class="hint">review only what the model flags</span></h2>
+    <div class="savings" id="savings"></div>
+  </section>
+
+  <section class="tile">
+    <h2>is it calibrated? <span class="hint">model confidence vs. human agreement</span></h2>
+    <div class="chart" id="calibration"></div>
+    <div class="calib-foot" id="calib-foot"></div>
+  </section>
+
+  <section class="tile wide ads-tile" id="ads-tile" hidden>
+    <h2>advertisement</h2>
+    <div id="ads"></div>
+  </section>
+</main>
+
+<aside class="sidebar">
+  <div class="tabs">
+    <button class="tab active" data-tab="all">judged</button>
+    <button class="tab" data-tab="review">needs a human <span class="count" id="review-count"></span></button>
+    <span class="filters" id="filters"></span>
+    <span class="hint" id="feed-hint">1 card / 1.5s</span>
+  </div>
+  <div class="cards" id="feed"></div>
+</aside>
+</div>
+
+<footer>
+  <span>runs 24/7 at a trickle, faster while you watch · en posts, sampled · nsfw dropped server-side</span>
+  <span class="api">api: <a href="/api/panel">panel</a> · <a href="/api/series?minutes=1440">series</a> · <a href="/api/crosstab?rows=topic&cols=intent&minutes=1440">crosstab</a> · <a href="/api/terms?minutes=60">terms</a> · <a href="/api/graph?minutes=60">graph</a> · <a href="/api/votes">votes</a> · <a href="/api/export.ndjson">export</a></span>
+  <span class="badge"><a href="/badge.svg" id="badge-link">badge</a> <img id="badge-img" src="/badge.svg" alt="bluesky mood" height="20"><span class="snip" id="badge-snip" hidden><code id="badge-md">![bluesky mood](https://cloutmetrics.ai/badge.svg)</code><button id="badge-copy" type="button">copy</button></span></span>
+  <a href="https://github.com/ragelink/firehose-judge" target="_blank" rel="noopener">source</a>
+</footer>
+<script src="/app.js"></script>
+</body>
+</html>
