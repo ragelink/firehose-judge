@@ -8,6 +8,7 @@
     "bindings": [{ "name": "FIREHOSE", "class_name": "Firehose" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Firehose"] }],
+  "r2_buckets": [{ "binding": "ARCHIVE", "bucket_name": "cloutmetrics-archive" }],
   "vars": {
     // Posts per second sampled from the firehose and sent to Jev while at least one viewer is connected.
     "JUDGE_RATE_PER_SEC": "3",
@@ -18,7 +19,20 @@
     "TYPESAFE_URL": "https://api.typesafe.ai/v1/systemone",
     "TYPESAFE_MODEL": "jev-latest",
     // USD per million input tokens; output tokens are free.
-    "PRICE_PER_M_INPUT": "0.042"
+    "PRICE_PER_M_INPUT": "0.042",
+    // Sampling stops when the rolling 24h Jev spend reaches this, and resumes when the window drains.
+    "MAX_USD_PER_DAY": "5",
+    // Stripe Payment Link shown to viewers; empty hides the ask.
+    "STRIPE_LINK": "",
+    // Flat Cloudflare estimate added to the Jev spend in the funding numbers.
+    "INFRA_USD_PER_DAY": "0.20",
+    "MONTHLY_GOAL_USD": "150",
+    // Empty keeps the AdSense script off the page entirely.
+    "ADSENSE_CLIENT": "",
+    "ADSENSE_SLOT": "",
+    // Cloudflare GraphQL analytics for /api/costs; the token is a secret (CF_ANALYTICS_TOKEN).
+    "CF_ACCOUNT_ID": "e87eea63be7f065f610560a9d49c82ff",
+    "CF_SCRIPT_NAME": "firehose-judge"
   },
   "observability": { "enabled": true }
 }

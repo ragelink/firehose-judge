@@ -9,7 +9,8 @@ export const QUESTIONS = questions as Record<string, Question>;
 
 export type Answer =
   | { type: "choice"; choice: string; probabilities: Record<string, number>; confidence: number }
-  | { type: "score"; score: number; legend: string[]; probabilities: number[]; confidence: number }
+  // Jev keys legend and probabilities by level index ("0".."n"), not as arrays.
+  | { type: "score"; score: number; legend: Record<string, string>; probabilities: Record<string, number>; confidence: number }
   | { type: "noul"; noul: number };
 
 export interface JevResponse {
@@ -24,14 +25,30 @@ export interface JevConfig {
   apiKey: string;
 }
 
-export async function judge(cfg: JevConfig, state: string): Promise<JevResponse> {
-  const res = await fetch(cfg.url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${cfg.apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: cfg.model, state, questions: QUESTIONS }),
-  });
-  if (!res.ok) throw new Error(`jev ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  return res.json();
+const RETRIES = 2;
+
+export async function judge(cfg: JevConfig, state: string, onRetry?: () => void): Promise<JevResponse> {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(cfg.url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${cfg.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: cfg.model, state, questions: QUESTIONS }),
+    });
+    if (res.ok) return res.json();
+    if ((res.status === 429 || res.status === 529) && attempt < RETRIES) {
+      onRetry?.();
+      await new Promise((r) => setTimeout(r, retryAfterMs(res.headers.get("retry-after"))));
+      continue;
+    }
+    throw new Error(`jev ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+}
+
+// `retry-after` is seconds by convention, but gateways in front of the API sometimes send milliseconds.
+function retryAfterMs(header: string | null): number {
+  const n = Number(header);
+  if (!Number.isFinite(n) || n <= 0) return 1000;
+  return Math.min(n > 1000 ? n : n * 1000, 10_000);
 }
 
 // Nouls have no confidence field; distance from 0.5 is the natural equivalent.

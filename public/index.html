@@ -25,6 +25,7 @@
     <div class="stat big"><div class="v" id="s-judged">0</div><div class="k">posts judged</div></div>
     <div class="stat"><div class="v"><span id="s-latency">–</span><small>ms</small></div><div class="k">median latency</div></div>
     <div class="stat"><div class="v"><small>$</small><span id="s-cost">0.00</span></div><div class="k">total spend</div></div>
+    <div class="stat dual" id="stat-budget" hidden><div class="v"><small>$</small><span id="s-spent">0.00</span><small>of $</small><span id="s-cap">–</span></div><div class="k">24h spend / cap</div></div>
     <div class="stat"><div class="v"><span id="s-review">0</span><small>%</small></div><div class="k">sent to a human</div></div>
     <div class="stat"><div class="v" id="s-votes">0</div><div class="k">human votes</div></div>
     <div class="stat"><div class="v" id="s-rate">–</div><div class="k">sampling</div></div>
@@ -48,6 +49,16 @@
   <section class="tile">
     <h2>topic <span class="hint">last 10 min vs 24h</span></h2>
     <div class="hbars" id="bars-topic"></div>
+  </section>
+
+  <section class="tile fund-tile" id="fund-tile" hidden>
+    <h2>keep the firehose on <span class="hint">contributions vs. cost</span></h2>
+    <div class="fund" id="fund"></div>
+  </section>
+
+  <section class="tile backers-tile" id="backers-tile" hidden>
+    <h2>clout leaderboard <span class="hint">who is paying for the stream this month</span></h2>
+    <div class="backers" id="backers"></div>
   </section>
 
   <section class="tile wide">
@@ -82,6 +93,17 @@
     <div class="perf" id="perf"></div>
   </section>
 
+  <section class="tile wide curve-tile" id="curve-tile" hidden>
+    <h2>operating curve <span class="hint">where the line between the model and a human can sit · last 24h</span></h2>
+    <div class="chart" id="curve"></div>
+    <div class="legend" id="legend-curve"></div>
+    <div class="curve-ctl">
+      <label for="curve-slider">review share target</label>
+      <input id="curve-slider" type="range" min="0" max="100" step="1" value="0">
+      <span class="pick" id="curve-pick"></span>
+    </div>
+  </section>
+
   <section class="tile savings-tile">
     <h2>what a human lane saves <span class="hint">review only what the model flags</span></h2>
     <div class="savings" id="savings"></div>
@@ -92,12 +114,18 @@
     <div class="chart" id="calibration"></div>
     <div class="calib-foot" id="calib-foot"></div>
   </section>
+
+  <section class="tile wide ads-tile" id="ads-tile" hidden>
+    <h2>advertisement</h2>
+    <div id="ads"></div>
+  </section>
 </main>
 
 <aside class="sidebar">
   <div class="tabs">
     <button class="tab active" data-tab="all">judged</button>
     <button class="tab" data-tab="review">needs a human <span class="count" id="review-count"></span></button>
+    <span class="filters" id="filters"></span>
     <span class="hint" id="feed-hint">1 card / 1.5s</span>
   </div>
   <div class="cards" id="feed"></div>
@@ -107,6 +135,7 @@
 <footer>
   <span>runs 24/7 at a trickle, faster while you watch · en posts, sampled · nsfw dropped server-side</span>
   <span class="api">api: <a href="/api/panel">panel</a> · <a href="/api/series?minutes=1440">series</a> · <a href="/api/crosstab?rows=topic&cols=intent&minutes=1440">crosstab</a> · <a href="/api/terms?minutes=60">terms</a> · <a href="/api/graph?minutes=60">graph</a> · <a href="/api/votes">votes</a> · <a href="/api/export.ndjson">export</a></span>
+  <span class="badge"><a href="/badge.svg" id="badge-link">badge</a> <img id="badge-img" src="/badge.svg" alt="bluesky mood" height="20"><span class="snip" id="badge-snip" hidden><code id="badge-md">![bluesky mood](https://cloutmetrics.ai/badge.svg)</code><button id="badge-copy" type="button">copy</button></span></span>
   <a href="https://github.com/ragelink/firehose-judge" target="_blank" rel="noopener">source</a>
 </footer>
 <script src="/app.js"></script>

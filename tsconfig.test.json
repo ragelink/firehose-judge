@@ -1,0 +1,6 @@
+{
+  // The worker project deliberately stops at src/: tests are not deployed. This one
+  // covers them, and reaches whatever they import. Run: npx tsc -p tsconfig.test.json
+  "extends": "./tsconfig.json",
+  "include": ["tests/**/*.ts", "worker-configuration.d.ts", "vitest.config.mts"]
+}

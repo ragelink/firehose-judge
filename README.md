@@ -81,6 +81,54 @@ To point this at a different stream, replace `onPost` in `src/firehose.ts`
 with a parser for your events. Everything downstream only needs a string of
 text and an id.
 
+## API
+
+Everything is `GET`, CORS-open, and served by the Durable Object.
+
+| endpoint | what |
+|---|---|
+| `/api/stats` | counters, cost, budget, funding, ad slots |
+| `/api/panel` | everything the control panel renders, in one call |
+| `/api/series?minutes=60` | per-minute means and intent mix |
+| `/api/terms?minutes=60` | trending terms with burst scores |
+| `/api/graph?minutes=60` | term co-occurrence nodes and edges |
+| `/api/crosstab?rows=topic&cols=intent` | means per cell |
+| `/api/votes` | human-vote calibration bins |
+| `/api/curve?minutes=1440` | review share and human agreement at 21 confidence thresholds |
+| `/api/posts?minutes=60&term=&intent=&topic=&limit=30` | recent judged posts, newest first |
+| `/api/hourly?hours=720` | hourly rollups, kept forever |
+| `/api/funding` | contributions and running cost by window |
+| `/api/backers` | backer list, leaderboard, pinned message |
+| `/api/archive` | keys of the nightly R2 dumps |
+| `/api/export.ndjson?since=0&limit=5000` | raw judgments, one JSON object per line |
+| `/api/alerts` | the surge log: term bursts, hostility spikes, mood swings |
+| `/api/costs` | live Cloudflare usage priced for today, week, month (needs `CF_ANALYTICS_TOKEN`) |
+| `/badge.svg` | shields-style badge of the three-minute mood |
+
+`POST /api/stripe/webhook` takes Stripe events, verifies the `Stripe-Signature`
+header against `STRIPE_WEBHOOK_SECRET`, and records contributions. Backer
+messages go through the same eight questions as every post before they are
+shown.
+
+The judgment curve is the point of `/api/curve`: it replays the window at every
+threshold from 0 to 1, so you can read what a stricter review bar would cost in
+human hours and buy in agreement, then move `REVIEW_THRESHOLD` with evidence.
+
+Nightly, the Durable Object writes the previous UTC day to R2 as
+`judgments/YYYY-MM-DD.ndjson` and `hourly/YYYY-MM-DD.json`. Create the bucket
+(`wrangler r2 bucket create cloutmetrics-archive`) or drop the `r2_buckets`
+binding; without it the archive is skipped and nothing else changes.
+
+More knobs in `wrangler.jsonc`:
+
+| var | default | what |
+|---|---|---|
+| `MAX_USD_PER_DAY` | `5` | sampling stops when the rolling 24h spend hits this, and resumes when it drains |
+| `INFRA_USD_PER_DAY` | `0.20` | flat Cloudflare estimate added to the running cost |
+| `MONTHLY_GOAL_USD` | `150` | the funding meter's goal |
+| `STRIPE_LINK` | empty | Payment Link shown to viewers; empty hides the ask |
+| `ADSENSE_CLIENT`, `ADSENSE_SLOT` | empty | empty keeps AdSense off the page |
+
 ## What it costs
 
 Measured on the live deploy: median latency ~260ms for eight questions, about
@@ -88,6 +136,12 @@ Measured on the live deploy: median latency ~260ms for eight questions, about
 roughly $0.40 an hour of Jev while someone is watching, about $1.60 a day for
 the idle trickle, and the Worker and
 Durable Object stay inside Cloudflare's $5 plan.
+
+## Tests and docs
+
+`npm test` runs the vitest suite for term extraction, review thresholds, the
+surge detector and the cost model. `docs/alerts.md` and `docs/costs.md` cover
+the thresholds, the analytics token, and the exact GraphQL query.
 
 ## License
 

@@ -2,6 +2,7 @@ const $ = (id) => document.getElementById(id);
 const SERIES = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"];
 const FEED_MAX = 40;
 const FEED_INTERVAL_MS = 1500;
+const POLL_MS = 60000;
 const SIGNALS = [["hostile", "hostile"], ["sarcasm", "sarcasm"], ["bait", "bait /3"], ["sentiment", "sentiment /4"]];
 const BARO = [["sentiment", "mood", (v) => v == null ? "–" : `${Math.round(v * 100)}`], ["bait", "bait"], ["hostile", "hostile"], ["sarcasm", "sarcasm"], ["bot", "bots"]];
 
@@ -13,6 +14,8 @@ let shownJudged = 0;
 const queue = [];
 const seenIds = new Set();
 let reviewCount = 0;
+let thresholds = null;
+const filter = { term: null, intent: null, topic: null };
 
 // ---- connection ------------------------------------------------------------
 
@@ -23,6 +26,7 @@ function connect() {
     const msg = JSON.parse(e.data);
     if (msg.type === "hello") {
       questions = msg.questions;
+      thresholds = msg.thresholds || null;
       intentKeys = Object.keys(questions.intent?.criteria || {});
       $("feed").replaceChildren();
       seenIds.clear();
@@ -30,6 +34,8 @@ function connect() {
       for (const p of msg.recent) enqueue(p, true);
       renderStats(msg.stats);
       renderPanel(msg.panel);
+      renderCurve();
+      if (filterActive()) loadFiltered();
     } else if (msg.type === "post") {
       enqueue(msg.post, false);
       renderStats(msg.stats);
@@ -39,6 +45,8 @@ function connect() {
       renderPanel(msg.panel);
     } else if (msg.type === "calibration") {
       renderCalibration(msg.calibration);
+    } else if (msg.type === "backers") {
+      renderBackers(msg.backers);
     }
   };
   ws.onclose = () => { $("status").textContent = "reconnecting…"; $("live-dot").className = "dot"; setTimeout(connect, 1500); };
@@ -50,11 +58,158 @@ function renderStats(s) {
   $("s-cost").textContent = s.costUsd.toFixed(2);
   $("s-review").textContent = s.judged ? Math.round((100 * s.reviewed) / s.judged) : 0;
   $("s-votes").textContent = s.votes.toLocaleString();
-  $("s-rate").textContent = s.live ? `${s.ratePerSec}/s of ${Math.round(s.seenPerSec)}/s` : "paused";
   $("s-viewers").textContent = s.viewers;
   $("model").textContent = s.model ? `(${s.model})` : "";
-  $("live-dot").className = s.live ? "dot live" : "dot";
-  $("status").textContent = s.live ? "live" : "connecting to jetstream…";
+  // The daily budget stops the sampler; the page says so rather than looking dead.
+  const b = s.budget;
+  const paused = !!(b && b.paused);
+  $("stat-budget").hidden = !b;
+  if (b) { $("s-spent").textContent = usd(b.spent24h); $("s-cap").textContent = usd(b.usdPerDay); }
+  $("s-rate").textContent = paused ? "paused" : s.live ? `${s.ratePerSec}/s of ${Math.round(s.seenPerSec)}/s` : "paused";
+  $("live-dot").className = paused ? "dot paused" : s.live ? "dot live" : "dot";
+  $("status").textContent = paused ? `paused · daily budget reached ($${usd(b.spent24h)} of $${usd(b.usdPerDay)})`
+    : s.live ? "live" : "connecting to jetstream…";
+  renderFunding(s.funding, b);
+  renderAds(s.ads);
+}
+
+const usd = (v) => (Number(v) || 0).toFixed(2);
+
+// ---- funding ----------------------------------------------------------------
+
+let fundKey = "";
+
+function renderFunding(f, budget) {
+  const tile = $("fund-tile");
+  if (!f) { tile.hidden = true; fundKey = ""; return; }
+  tile.hidden = false;
+  fundingLink = typeof f.link === "string" ? f.link : "";
+  updateBuyLink();
+  const cap = typeof budget?.usdPerDay === "number" ? budget.usdPerDay : null;
+  const key = JSON.stringify([f.today, f.week, f.month, f.costToday, f.costWeek, f.costMonth, f.link, cap]);
+  if (key === fundKey) return;
+  fundKey = key;
+  const bar = (label, got, cost, hue, tick) => {
+    const g = Number(got) || 0, c = Number(cost) || 0;
+    const pct = c > 0 ? Math.min(1, g / c) : g > 0 ? 1 : 0;
+    const mark = tick != null && c > 0
+      ? `<i class="tick" style="left:${(100 * Math.min(1, tick / c)).toFixed(1)}%" title="daily budget cap $${usd(tick)}"></i>` : "";
+    return `<div class="m"><span class="k">${label}</span><div class="track"><i class="fill" style="width:${(100 * pct).toFixed(1)}%;background:var(${hue})"></i>${mark}</div><span class="v">$${usd(g)} of $${usd(c)}</span></div>`;
+  };
+  const day = cap || Number(f.costToday) || 5;
+  const give = f.link
+    ? `<a class="give" href="${escapeHtml(String(f.link))}" target="_blank" rel="noopener">cover a day ($${day % 1 ? day.toFixed(2) : day})</a>` : "";
+  $("fund").innerHTML = `<div class="meters">${bar("today", f.today, f.costToday, "--seq-2", cap)}${bar("this week", f.week, f.costWeek, "--seq-4", null)}${bar("this month", f.month, f.costMonth, "--seq-6", null)}</div>`
+    + `<div class="foot"><span>Jev bill + hosting, covered by readers</span>${give}</div>`;
+}
+
+// ---- backers ----------------------------------------------------------------
+
+let fundingLink = "";
+
+const BACKERS_SKELETON = `
+  <div class="therm">
+    <div class="col"><div class="tube"><i class="fill"></i><i class="tick" style="bottom:25%"></i><i class="tick" style="bottom:50%"></i><i class="tick" style="bottom:75%"></i><i class="tick" style="bottom:100%"></i></div><i class="bulb"></i></div>
+    <div class="num"></div>
+  </div>
+  <div class="right">
+    <div class="head"><span>top backers</span><a class="buy" href="#" target="_blank" rel="noopener" hidden>buy your way up ↗</a></div>
+    <div class="board"></div>
+    <div class="ticker"></div>
+  </div>
+  <div class="pin-slot"></div>`;
+
+async function loadBackers() {
+  let next = null;
+  try {
+    const res = await fetch("/api/backers");
+    if (res.ok) { const data = await res.json(); if (data && Array.isArray(data.leaderboard)) next = data; }
+  } catch {}
+  renderBackers(next);
+}
+
+function renderBackers(b) {
+  const tile = $("backers-tile");
+  if (!b) { tile.hidden = true; return; }
+  tile.hidden = false;
+  const host = $("backers");
+  // The skeleton is built once so the thermometer can transition between renders.
+  if (!host.firstElementChild) host.innerHTML = BACKERS_SKELETON;
+  const goal = Number(b.goalUsd) || 0, raised = Number(b.raisedMonth) || 0;
+  host.querySelector(".tube .fill").style.height = `${(100 * (goal > 0 ? Math.min(1, raised / goal) : 0)).toFixed(1)}%`;
+  host.querySelector(".num").innerHTML = `<b>$${money(raised)}</b> of $${money(goal)}<br><small>this month</small>`;
+  updateBuyLink();
+  const board = (b.leaderboard || []).slice(0, 10);
+  host.querySelector(".board").innerHTML = board.length
+    ? board.map((r, i) => `<div class="r"><span class="i">${i + 1}</span><span class="who">${escapeHtml(String(r.name ?? "anonymous"))}</span><span class="tier">${escapeHtml(String(r.tier || ""))}</span><span class="amt">$${money(r.total)}</span></div>`).join("")
+    : '<div class="empty">no backers yet · the first name here takes the top slot</div>';
+  const recent = (b.backers || []).slice(0, 8);
+  host.querySelector(".ticker").textContent = recent.length
+    ? `recent · ${recent.map((r) => `${r.name ?? "anonymous"} $${money(r.amount)}`).join(" · ")}` : "";
+  renderPinned(host.querySelector(".pin-slot"), b.pinned);
+}
+
+function updateBuyLink() {
+  const buy = $("backers").querySelector(".buy");
+  if (!buy) return;
+  buy.hidden = !fundingLink;
+  if (fundingLink) buy.href = fundingLink;
+}
+
+function money(v) { const n = Number(v) || 0; return n % 1 ? n.toFixed(2) : String(Math.round(n)); }
+
+// A paid message is still judged in public: same chips as any card in the feed.
+function renderPinned(slot, pin) {
+  if (!pin) { slot.replaceChildren(); return; }
+  const box = document.createElement("div");
+  box.className = "pinned";
+  box.innerHTML = `<div class="who">on the wire, paid for by <b>${escapeHtml(String(pin.name || "anonymous"))}</b> · $${money(pin.amount)}</div>`
+    + `<p class="msg">${linkifyOne(String(pin.message || ""))}</p>`;
+  const chips = answerChips(pin.answers || {});
+  if (chips.length) { const wrap = document.createElement("div"); wrap.className = "chips"; wrap.append(...chips); box.append(wrap); }
+  box.append(...answerMeters(pin.answers || {}));
+  const note = document.createElement("div");
+  note.className = "note";
+  note.textContent = "paid messages pass the same judge; anything the model flags as unsafe never shows";
+  box.append(note);
+  slot.replaceChildren(box);
+}
+
+// Only the URL in a paid message becomes a link, and it carries nofollow.
+function linkifyOne(text) {
+  const m = text.match(/https?:\/\/[^\s<]+/);
+  if (!m) return escapeHtml(text);
+  return escapeHtml(text.slice(0, m.index))
+    + `<a href="${escapeHtml(m[0])}" target="_blank" rel="noopener nofollow">${escapeHtml(m[0])}</a>`
+    + escapeHtml(text.slice(m.index + m[0].length));
+}
+
+setInterval(loadBackers, POLL_MS);
+loadBackers();
+
+// ---- ads --------------------------------------------------------------------
+
+let adsLoaded = false;
+
+// The one third-party script on the page, and only when both ids are configured.
+function renderAds(ads) {
+  if (adsLoaded || !ads?.client || !ads?.slot) return;
+  adsLoaded = true;
+  $("ads-tile").hidden = false;
+  const ins = document.createElement("ins");
+  ins.className = "adsbygoogle";
+  ins.style.display = "block";
+  ins.dataset.adClient = ads.client;
+  ins.dataset.adSlot = ads.slot;
+  ins.dataset.adFormat = "auto";
+  ins.dataset.fullWidthResponsive = "true";
+  $("ads").replaceChildren(ins);
+  const script = document.createElement("script");
+  script.async = true;
+  script.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${encodeURIComponent(ads.client)}`;
+  script.crossOrigin = "anonymous";
+  document.head.append(script);
+  (window.adsbygoogle = window.adsbygoogle || []).push({});
 }
 
 function animateNumber(el, target) {
@@ -74,8 +229,8 @@ function animateNumber(el, target) {
 
 function renderPanel(p) {
   baroTarget(p.baro);
-  renderBars($("bars-intent"), p.shares.intent, intentKeys);
-  renderBars($("bars-topic"), p.shares.topic, Object.keys(questions.topic?.criteria || {}));
+  renderBars($("bars-intent"), p.shares.intent, intentKeys, "intent");
+  renderBars($("bars-topic"), p.shares.topic, Object.keys(questions.topic?.criteria || {}), "topic");
   renderIntentTrend(p.series);
   renderSignals(p.series);
   renderCloud(p.terms);
@@ -115,7 +270,7 @@ function renderPerf(perf) {
 // ---- savings ---------------------------------------------------------------
 
 let workload = null;
-const pref = (k, d) => { try { return Number(localStorage.getItem(k)) || d; } catch { return d; } };
+const pref = (k, d) => { try { const v = localStorage.getItem(k); return v === null || v === "" || Number.isNaN(Number(v)) ? d : Number(v); } catch { return d; } };
 const savingsIn = { secs: pref("secsPerPost", 20), rate: pref("usdPerHour", 30) };
 
 function renderSavings() {
@@ -123,14 +278,20 @@ function renderSavings() {
   const w = workload;
   if (!w || !w.judged24h) { host.innerHTML = '<div class="hint">collecting…</div>'; return; }
   const perDay = (w.judged24h / w.hoursObserved) * 24;
-  const reviewShare = w.reviewed24h / w.judged24h;
+  const liveShare = w.reviewed24h / w.judged24h;
+  // With a curve loaded the arithmetic follows the slider's operating point, not the threshold the server happens to run.
+  const op = operatingPoint();
+  const reviewShare = op ? op.reviewShare : liveShare;
   const autoShare = 1 - reviewShare;
   const hoursAll = (perDay * savingsIn.secs) / 3600;
   const hoursSaved = hoursAll * autoShare;
   const usdSaved = hoursSaved * savingsIn.rate;
   const jevPerDay = ((w.tokens24h / w.hoursObserved) * 24 / 1e6) * w.pricePerM;
-  const fid = w.confidentAgree == null ? null : Math.round(w.confidentAgree * 100);
-  const errs = fid == null ? null : Math.round(perDay * autoShare * (1 - w.confidentAgree));
+  const opFid = !!op && op.confidentVotes >= 3 && op.confidentAgree != null;
+  const agree = opFid ? op.confidentAgree : w.confidentAgree;
+  const votes = opFid ? op.confidentVotes : w.confidentVotes;
+  const fid = agree == null ? null : Math.round(agree * 100);
+  const errs = fid == null ? null : Math.round(perDay * autoShare * (1 - agree));
   host.innerHTML = `
     <div class="in">
       <label>sec / post <input id="in-secs" type="number" min="1" max="600" value="${savingsIn.secs}"></label>
@@ -138,17 +299,139 @@ function renderSavings() {
     </div>
     <div class="row"><span>posts / day at this sampling</span><b>${Math.round(perDay).toLocaleString()}</b></div>
     <div class="row"><span>model decides alone</span><b>${Math.round(autoShare * 100)}%</b></div>
-    <div class="row"><span>a human still reviews</span><b>${Math.round(reviewShare * 100)}% · ${(hoursAll * reviewShare).toFixed(1)} h/day</b></div>
+    <div class="row"><span>a human still reviews${op ? ` at c=${op.c.toFixed(2)}` : ""}</span><b>${Math.round(reviewShare * 100)}% · ${(hoursAll * reviewShare).toFixed(1)} h/day</b></div>
+    ${op ? `<div class="note">at the current threshold: ${Math.round(liveShare * 100)}%</div>` : ""}
     <div class="row hero"><span>human hours saved / day</span><b>${hoursSaved.toFixed(1)} h</b></div>
     <div class="row"><span>worth, at your rate</span><b>$${Math.round(usdSaved).toLocaleString()} / day</b></div>
     <div class="row"><span>Jev bill at this rate</span><b>$${jevPerDay.toFixed(2)} / day</b></div>
-    <div class="row"><span>fidelity on confident answers</span><b>${fid == null ? "no spot checks yet" : `${fid}% (n=${w.confidentVotes})`}</b></div>
+    <div class="row"><span>fidelity on confident answers</span><b>${fid == null ? "no spot checks yet" : `${fid}% (n=${votes})`}</b></div>
     <div class="note">${fid == null ? "Confident cards in the feed carry a spot-check question. Each vote on one measures how often the model is right when it was sure, and that becomes the fidelity above." : `At that fidelity, about ${errs.toLocaleString()} of the auto-decided posts per day would be judged differently by a human.`}${w.hoursObserved < 24 ? ` Extrapolated from ${w.hoursObserved.toFixed(1)} h of data.` : ""}</div>`;
   $("in-secs").onchange = (e) => { savingsIn.secs = Number(e.target.value) || 20; try { localStorage.setItem("secsPerPost", savingsIn.secs); } catch {} renderSavings(); };
   $("in-rate").onchange = (e) => { savingsIn.rate = Number(e.target.value) || 30; try { localStorage.setItem("usdPerHour", savingsIn.rate); } catch {} renderSavings(); };
 }
 
-function renderBars(el, shares, keys) {
+// ---- operating curve ---------------------------------------------------------
+
+let curve = null;                              // /api/curve payload; null until it loads, or on a server without the route
+let curveTarget = pref("reviewTarget", null);  // share of posts the operator wants in the human lane, 0-100
+let curveGeom = null;
+
+async function loadCurve() {
+  let next = null;
+  try {
+    const res = await fetch("/api/curve?minutes=1440");
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data?.points) && data.points.length) next = data;
+    }
+  } catch {}
+  curve = next;
+  renderCurve();
+  renderSavings();
+}
+
+function curvePoints() {
+  return curve ? curve.points.filter((p) => p && typeof p.c === "number" && typeof p.reviewShare === "number") : [];
+}
+
+// Where the slider is parked. With no stored preference, the threshold the server is actually running.
+function operatingPoint() {
+  const pts = curvePoints();
+  if (!pts.length) return null;
+  if (curveTarget == null) {
+    const c = thresholds?.choice ?? 0.4;
+    return pts.reduce((best, p) => (Math.abs(p.c - c) < Math.abs(best.c - c) ? p : best), pts[0]);
+  }
+  const want = curveTarget / 100;
+  return pts.reduce((best, p) => (Math.abs(p.reviewShare - want) < Math.abs(best.reviewShare - want) ? p : best), pts[0]);
+}
+
+function renderCurve() {
+  const pts = curvePoints();
+  $("curve-tile").hidden = pts.length < 2;
+  if (pts.length < 2) { curveGeom = null; return; }
+  const host = $("curve");
+  const W = 900, H = 200, padL = 34, padR = 10, padT = 12, padB = 18;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}` });
+  const x = (c) => padL + plotW * c, y = (v) => padT + plotH * (1 - Math.max(0, Math.min(1, v)));
+  for (const f of [0, 0.5, 1]) {
+    svg.append(svgEl("line", { x1: padL, x2: W - padR, y1: y(f), y2: y(f), class: f === 0 ? "axis" : "grid" }));
+    const t = svgEl("text", { x: padL - 4, y: y(f) + 3, "text-anchor": "end" }); t.textContent = `${f * 100}%`; svg.append(t);
+  }
+  for (const c of [0, 0.25, 0.5, 0.75, 1]) {
+    const t = svgEl("text", { x: x(c), y: H - 4, "text-anchor": c === 0 ? "start" : c === 1 ? "end" : "middle" });
+    t.textContent = c.toFixed(2); svg.append(t);
+  }
+  const cap = svgEl("text", { x: padL + plotW / 2, y: padT - 2, "text-anchor": "middle" });
+  cap.textContent = "choice-confidence threshold c →";
+  svg.append(cap);
+  svg.append(svgEl("polyline", {
+    points: pts.map((p) => `${x(p.c).toFixed(1)},${y(p.reviewShare).toFixed(1)}`).join(" "),
+    fill: "none", stroke: SERIES[0], "stroke-width": 2, "stroke-linejoin": "round",
+  }));
+  // Fidelity only means something once a few humans have voted; thin evidence draws dashed.
+  const fid = pts.filter((p) => p.confidentVotes >= 3 && p.confidentAgree != null);
+  for (let i = 1; i < fid.length; i++) {
+    const a = fid[i - 1], b = fid[i];
+    svg.append(svgEl("line", {
+      x1: x(a.c), y1: y(a.confidentAgree), x2: x(b.c), y2: y(b.confidentAgree),
+      stroke: SERIES[2], "stroke-width": 2, "stroke-dasharray": Math.min(a.confidentVotes, b.confidentVotes) < 10 ? "4 3" : "none",
+    }));
+  }
+  for (const p of fid) svg.append(svgEl("circle", { cx: x(p.c), cy: y(p.confidentAgree), r: 2.5, fill: SERIES[2] }));
+  if (thresholds?.choice != null) {
+    svg.append(svgEl("line", { x1: x(thresholds.choice), x2: x(thresholds.choice), y1: padT, y2: padT + plotH, class: "mark" }));
+    const t = svgEl("text", { x: x(thresholds.choice) + 4, y: padT + 9 }); t.textContent = `server c=${thresholds.choice.toFixed(2)}`; svg.append(t);
+  }
+  const line = svgEl("line", { class: "pick-line", y1: padT, y2: padT + plotH, x1: x(0), x2: x(0) });
+  const dot = svgEl("circle", { cx: x(0), cy: y(0), r: 4, fill: SERIES[3], stroke: "#1a1a19", "stroke-width": 2 });
+  svg.append(line, dot);
+  host.replaceChildren(svg);
+  curveGeom = { x, y, line, dot };
+  hoverPoints(host, svg, padT, plotH, pts.map((p) => x(p.c)), pts, (p) => {
+    const f = p.confidentVotes >= 3 && p.confidentAgree != null ? `<b>${Math.round(p.confidentAgree * 100)}%</b> (n=${p.confidentVotes})` : `${p.confidentVotes || 0} votes`;
+    return `<b>c=${p.c.toFixed(2)}</b> · noul ${num(p.noul)} · score ${num(p.score)}<br>humans review <b>${Math.round(p.reviewShare * 100)}%</b><br>fidelity on the rest ${f}`;
+  });
+  $("legend-curve").innerHTML = [
+    `<span><i class="sw" style="background:${SERIES[0]}"></i>humans review</span>`,
+    `<span><i class="sw" style="background:${SERIES[2]}"></i>fidelity on the rest · dashed under 10 votes</span>`,
+    `<span><i class="sw" style="background:${SERIES[3]}"></i>slider</span>`,
+    `<span>dashed vertical = threshold the server runs</span>`,
+    `<span>${(curve.n || 0).toLocaleString()} posts · ${(curve.votes || 0).toLocaleString()} votes</span>`,
+  ].join("");
+  syncCurve();
+}
+
+function num(v) { return typeof v === "number" ? v.toFixed(2) : "–"; }
+
+function syncCurve() {
+  const op = operatingPoint();
+  if (!op) return;
+  const share = Math.round(op.reviewShare * 100);
+  // With no stored target the slider starts where the server is; with one, it starts there (including after a reload).
+  $("curve-slider").value = String(curveTarget == null ? share : curveTarget);
+  const measured = op.confidentVotes >= 3 && op.confidentAgree != null;
+  $("curve-pick").innerHTML = `threshold <b>c=${op.c.toFixed(2)}</b> · humans review <b>${share}%</b> · `
+    + `fidelity on the rest ${measured ? `<b>${Math.round(op.confidentAgree * 100)}%</b> (n=${op.confidentVotes})` : `<b>–</b> (n=${op.confidentVotes || 0})`}`;
+  if (curveGeom) {
+    curveGeom.line.setAttribute("x1", curveGeom.x(op.c));
+    curveGeom.line.setAttribute("x2", curveGeom.x(op.c));
+    curveGeom.dot.setAttribute("cx", curveGeom.x(op.c));
+    curveGeom.dot.setAttribute("cy", curveGeom.y(op.reviewShare));
+  }
+}
+
+$("curve-slider").oninput = (e) => { curveTarget = Number(e.target.value); syncCurve(); renderSavings(); };
+$("curve-slider").onchange = () => { try { localStorage.setItem("reviewTarget", String(curveTarget)); } catch {} };
+setInterval(loadCurve, POLL_MS);
+loadCurve();
+
+// Rows are kept and updated in place: the width transitions read as movement, and a row stays
+// under the cursor long enough to be clicked.
+const barRows = new Map();
+
+function renderBars(el, shares, keys, dim) {
   const hotTotal = Object.values(shares).reduce((a, b) => a + b.hot, 0) || 1;
   const baseTotal = Object.values(shares).reduce((a, b) => a + b.base, 0) || 1;
   const rows = keys.map((k) => {
@@ -156,20 +439,41 @@ function renderBars(el, shares, keys) {
     return { k, hot: s.hot / hotTotal, base: s.base / baseTotal };
   }).sort((a, b) => b.hot - a.hot);
   const max = Math.max(0.05, ...rows.map((r) => Math.max(r.hot, r.base)));
-  const frag = document.createDocumentFragment();
-  for (const h of ["", "", "10m", "vs 24h"]) { const d = document.createElement("div"); d.className = "head"; d.textContent = h; frag.append(d); }
-  for (const r of rows) {
-    const k = document.createElement("div"); k.className = "k"; k.textContent = r.k; k.title = questions[el.id === "bars-intent" ? "intent" : "topic"]?.criteria?.[r.k] || "";
-    const track = document.createElement("div"); track.className = "track";
-    const fill = document.createElement("div"); fill.className = "fill"; fill.style.width = `${(100 * r.hot) / max}%`;
-    const base = document.createElement("div"); base.className = "base"; base.style.left = `${(100 * r.base) / max}%`; base.title = `24h: ${Math.round(r.base * 100)}%`;
-    track.append(fill, base);
-    const pct = document.createElement("div"); pct.className = "pct"; pct.textContent = `${Math.round(r.hot * 100)}%`;
-    const d = Math.round((r.hot - r.base) * 100);
-    const delta = document.createElement("div"); delta.className = "delta " + (d > 1 ? "up" : d < -1 ? "down" : ""); delta.textContent = d > 0 ? `▲${d}` : d < 0 ? `▼${-d}` : "·";
-    frag.append(k, track, pct, delta);
+  let head = el.firstElementChild;
+  if (!head?.classList.contains("head")) {
+    head = document.createElement("div"); head.className = "hrow head";
+    for (const h of ["", "", "10m", "vs 24h"]) { const d = document.createElement("div"); d.textContent = h; head.append(d); }
+    el.replaceChildren(head);
   }
-  el.replaceChildren(frag);
+  let prev = head;
+  for (const r of rows) {
+    const id = `${dim}:${r.k}`;
+    let row = barRows.get(id);
+    if (!row) {
+      row = document.createElement("div");
+      row.className = "hrow";
+      row.dataset.dim = dim;
+      row.dataset.k = r.k;
+      row.innerHTML = '<div class="k"></div><div class="track"><div class="fill"></div><div class="base"></div></div><div class="pct"></div><div class="delta"></div>';
+      row.firstElementChild.textContent = r.k;
+      row.onclick = () => setFilter(dim, r.k);
+      barRows.set(id, row);
+    }
+    const [kc, track, pct, delta] = row.children;
+    kc.title = questions[dim]?.criteria?.[r.k] || "";
+    track.firstElementChild.style.width = `${(100 * r.hot) / max}%`;
+    track.lastElementChild.style.left = `${(100 * r.base) / max}%`;
+    track.lastElementChild.title = `24h: ${Math.round(r.base * 100)}%`;
+    pct.textContent = `${Math.round(r.hot * 100)}%`;
+    const d = Math.round((r.hot - r.base) * 100);
+    delta.className = "delta " + (d > 1 ? "up" : d < -1 ? "down" : "");
+    delta.textContent = d > 0 ? `▲${d}` : d < 0 ? `▼${-d}` : "·";
+    row.classList.toggle("sel", filter[dim] === r.k);
+    if (prev.nextSibling !== row) el.insertBefore(row, prev.nextSibling);
+    prev = row;
+  }
+  const live = new Set(rows.map((r) => `${dim}:${r.k}`));
+  for (const [id, row] of barRows) if (id.startsWith(`${dim}:`) && !live.has(id)) { row.remove(); barRows.delete(id); }
 }
 
 // ---- barometer (canvas equalizer) --------------------------------------------
@@ -320,25 +624,60 @@ function hoverLayer(host, ax, series, html) {
   host.onmouseleave = () => { cross.style.display = "none"; tip.style.display = "none"; };
 }
 
+// Same tooltip, for a chart sampled at fixed x positions rather than by minute.
+function hoverPoints(host, svg, top, plotH, xs, rows, html) {
+  const cross = svgEl("line", { y1: top, y2: top + plotH, class: "cross" });
+  svg.append(cross);
+  const tip = document.createElement("div"); tip.className = "tip"; host.append(tip);
+  host.onmousemove = (e) => {
+    const rect = svg.getBoundingClientRect();
+    const xm = ((e.clientX - rect.left) / rect.width) * svg.viewBox.baseVal.width;
+    let i = 0;
+    for (let j = 1; j < xs.length; j++) if (Math.abs(xs[j] - xm) < Math.abs(xs[i] - xm)) i = j;
+    cross.style.display = "block"; cross.setAttribute("x1", xs[i]); cross.setAttribute("x2", xs[i]);
+    tip.style.display = "block"; tip.innerHTML = html(rows[i]);
+    tip.style.left = `${Math.min(rect.width - tip.offsetWidth - 4, Math.max(0, e.clientX - rect.left + 12))}px`;
+    tip.style.top = `${e.clientY - rect.top - 10}px`;
+  };
+  host.onmouseleave = () => { cross.style.display = "none"; tip.style.display = "none"; };
+}
+
 // ---- cloud ------------------------------------------------------------------
+
+// Diffed by term so a chip the cursor is on survives the 4s repaint.
+const cloudEls = new Map();
 
 function renderCloud(terms) {
   const el = $("cloud");
-  if (!terms.length) { el.innerHTML = '<span class="empty">warming up…</span>'; return; }
+  if (!terms.length) { cloudEls.clear(); el.innerHTML = '<span class="empty">warming up…</span>'; return; }
+  el.querySelector(".empty")?.remove();
   const hots = terms.map((t) => t.hot).sort((a, b) => a - b);
   const q = (f) => hots[Math.min(hots.length - 1, Math.floor(f * hots.length))];
   const s2 = q(0.6), s3 = q(0.9);
-  const frag = document.createDocumentFragment();
-  for (const t of terms.slice(0, 48)) {
-    const span = document.createElement("span");
+  const list = terms.slice(0, 48);
+  const live = new Set(list.map((t) => t.t));
+  let prev = null;
+  for (const t of list) {
+    let node = cloudEls.get(t.t);
+    if (!node) {
+      node = document.createElement("span");
+      node.dataset.term = t.t;
+      const label = document.createElement("span"); label.textContent = t.t;
+      const n = document.createElement("small");
+      node.append(label, n);
+      node.onclick = () => setFilter("term", t.t);
+      cloudEls.set(t.t, node);
+    }
     const size = t.hot >= s3 ? "s3" : t.hot >= s2 ? "s2" : "s1";
     const burst = t.burst >= 4 ? "b3" : t.burst >= 2 ? "b2" : t.burst >= 1.3 ? "b1" : "";
-    span.className = `term ${size} ${burst} ${t.t.startsWith("#") ? "tag" : ""}`;
-    span.innerHTML = `${escapeHtml(t.t)}<small>${t.hot}</small>`;
-    span.title = `${t.hot} in the last 15 min · ${t.base} in 6h · ${t.burst.toFixed(1)}× expected`;
-    frag.append(span);
+    node.className = `term ${size} ${burst} ${t.t.startsWith("#") ? "tag" : ""}${filter.term === t.t ? " sel" : ""}`;
+    node.lastElementChild.textContent = t.hot;
+    node.title = `${t.hot} in the last 15 min · ${t.base} in 6h · ${t.burst.toFixed(1)}× expected`;
+    const at = prev ? prev.nextSibling : el.firstChild;
+    if (at !== node) el.insertBefore(node, at);
+    prev = node;
   }
-  el.replaceChildren(frag);
+  for (const [k, node] of cloudEls) if (!live.has(k)) { node.remove(); cloudEls.delete(k); }
 }
 
 function escapeHtml(s) { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
@@ -396,6 +735,9 @@ function renderGraph(g) {
   for (const n of nodes) {
     const p = pos.get(n.id);
     const c = svgEl("circle", { cx: p.x, cy: p.y, r: r(n) });
+    c.dataset.term = n.id;
+    if (filter.term === n.id) c.classList.add("sel");
+    c.onclick = () => setFilter("term", n.id);
     c.append(svgEl("title")); c.firstChild.textContent = `${n.id}: ${n.n} mentions`;
     const t = svgEl("text", { x: p.x + r(n) + 3, y: p.y + 3 }); t.textContent = n.id;
     svg.append(c, t);
@@ -440,6 +782,67 @@ function renderCalibration(c) {
   $("calib-foot").textContent = `${c.votes} votes · humans agree ${Math.round((c.agree || 0) * 100)}% overall · dotted line = perfectly calibrated`;
 }
 
+// ---- filters ----------------------------------------------------------------
+
+function filterActive() { return !!(filter.term || filter.intent || filter.topic); }
+
+function matchesFilter(p) {
+  if (filter.term && !(p.text || "").toLowerCase().includes(filter.term.toLowerCase())) return false;
+  if (filter.intent && p.answers?.intent?.choice !== filter.intent) return false;
+  if (filter.topic && p.answers?.topic?.choice !== filter.topic) return false;
+  return true;
+}
+
+// One value per dimension, combinable; clicking the same value again clears it.
+function setFilter(dim, value) {
+  filter[dim] = filter[dim] === value ? null : value;
+  renderFilterChips();
+  markFilterSelection();
+  $("feed-hint").textContent = filterActive() ? "last 60 min · live matches on top" : "1 card / 1.5s";
+  if (filterActive()) loadFiltered(); else rerenderFeed();
+}
+
+function renderFilterChips() {
+  $("filters").replaceChildren(...["term", "intent", "topic"].filter((d) => filter[d]).map((d) => {
+    const chip = document.createElement("span");
+    chip.className = "fchip";
+    chip.append(`${d}: ${filter[d]}`);
+    const x = document.createElement("button");
+    x.type = "button";
+    x.textContent = "×";
+    x.title = `clear the ${d} filter`;
+    x.onclick = () => setFilter(d, filter[d]);
+    chip.append(x);
+    return chip;
+  }));
+}
+
+function markFilterSelection() {
+  for (const el of document.querySelectorAll(".cloud .term")) el.classList.toggle("sel", el.dataset.term === filter.term);
+  for (const el of document.querySelectorAll("#graph circle")) el.classList.toggle("sel", el.dataset.term === filter.term);
+  for (const el of document.querySelectorAll(".hbars .hrow")) el.classList.toggle("sel", !!el.dataset.k && el.dataset.k === filter[el.dataset.dim]);
+}
+
+let filterSeq = 0;
+
+async function loadFiltered() {
+  const seq = ++filterSeq;
+  const q = new URLSearchParams({ minutes: "60", limit: "40" });
+  for (const d of ["term", "intent", "topic"]) if (filter[d]) q.set(d, filter[d]);
+  let posts = null;
+  try {
+    const res = await fetch(`/api/posts?${q}`);
+    if (res.ok) { const data = await res.json(); if (Array.isArray(data)) posts = data.map((r) => ({ ...r, review: r.review || [] })); }
+  } catch {}
+  if (seq !== filterSeq || !filterActive()) return;
+  // No such route on this server, or the call failed: fall back to the buffer the feed already holds.
+  if (!posts) posts = shown.filter(matchesFilter);
+  const rows = posts.filter((r) => tab === "all" || r.review.length).slice(0, FEED_MAX);
+  const feed = $("feed");
+  if (!rows.length) { feed.innerHTML = '<div class="hint">nothing matched in the last hour · live matches will appear here</div>'; return; }
+  feed.replaceChildren(...rows.map((r) => { const c = renderCard(r); c.style.animation = "none"; return c; }));
+}
+
 // ---- feed (throttled) -------------------------------------------------------
 
 function enqueue(p, immediate) {
@@ -447,6 +850,8 @@ function enqueue(p, immediate) {
   seenIds.add(p.id);
   if (p.review.length) { reviewCount++; $("review-count").textContent = reviewCount; }
   if (immediate) { addCard(p, false); return; }
+  // With a filter up, a match jumps the throttle queue so the filtered feed stays live.
+  if (filterActive() && matchesFilter(p)) { addCard(p, true); return; }
   queue.push(p);
   if (queue.length > 12) queue.splice(0, queue.length - 12);
 }
@@ -458,35 +863,36 @@ function addCard(p, animate) {
   shown.unshift(p);
   if (shown.length > FEED_MAX) shown.pop();
   if (tab === "review" && !p.review.length) return;
+  if (filterActive() && !matchesFilter(p)) return;
+  const feed = $("feed");
+  if ([...feed.children].some((c) => c.dataset.id === p.id)) return;
+  feed.querySelector(".hint")?.remove();
   const card = renderCard(p);
   if (!animate) card.style.animation = "none";
-  const feed = $("feed");
   feed.prepend(card);
   while (feed.children.length > FEED_MAX) feed.lastChild.remove();
 }
 
 function rerenderFeed() {
-  $("feed").replaceChildren(...shown.filter((p) => tab === "all" || p.review.length).map((p) => { const c = renderCard(p); c.style.animation = "none"; return c; }));
+  const rows = shown.filter((p) => (tab === "all" || p.review.length) && (!filterActive() || matchesFilter(p)));
+  $("feed").replaceChildren(...rows.map((p) => { const c = renderCard(p); c.style.animation = "none"; return c; }));
 }
 
 document.querySelectorAll(".tab").forEach((b) => b.onclick = () => {
   tab = b.dataset.tab;
   document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === b));
-  rerenderFeed();
+  if (filterActive()) loadFiltered(); else rerenderFeed();
 });
 
 function renderCard(p) {
   const a = p.answers;
   const card = document.createElement("article");
   card.className = "card" + (p.review.length ? " review" : "");
-  const chips = [];
-  if (a.intent) chips.push(chip(`${a.intent.choice} ${Math.round(a.intent.probabilities[a.intent.choice] * 100)}`, ""));
-  if (a.topic) chips.push(chip(a.topic.choice, ""));
-  if (a.sentiment) chips.push(chip(a.sentiment.legend[Math.round(a.sentiment.score)], ""));
-  if (a.bait) chips.push(chip(`bait ${a.bait.score.toFixed(1)}`, a.bait.score >= 1.5 ? "hot" : a.bait.score >= 0.8 ? "warm" : ""));
-  for (const k of ["hostile", "sarcasm", "bot"]) if (a[k]) chips.push(chip(`${k} ${Math.round(a[k].noul * 100)}%`, a[k].noul > 0.65 ? "hot" : a[k].noul > 0.4 ? "warm" : ""));
-  card.innerHTML = `<p class="text">${escapeHtml(p.text)}</p><div class="meta"><span>${p.latencyMs}ms</span><span>${p.inputTokens} tok</span><a href="${p.url}" target="_blank" rel="noopener">bsky ↗</a></div>`;
+  card.dataset.id = p.id;
+  const chips = answerChips(a);
+  card.innerHTML = `<p class="text"><a href="${escapeHtml(p.url)}" target="_blank" rel="noopener">${escapeHtml(p.text)}</a></p><div class="meta"><span>${p.latencyMs}ms</span><span>${p.inputTokens} tok</span><a href="${p.url}" target="_blank" rel="noopener">bsky ↗</a></div>`;
   const wrap = document.createElement("div"); wrap.className = "chips"; wrap.append(...chips); card.append(wrap);
+  card.append(...answerMeters(a));
   for (const q of p.review) card.append(askRow(p, q, false));
   if (!p.review.length) {
     const qs = Object.keys(a).filter((k) => k !== "nsfw");
@@ -495,13 +901,45 @@ function renderCard(p) {
   return card;
 }
 
+// Score answers arrive keyed "0".."4" rather than as arrays, so levels always go through Object.values.
+function levelsOf(o) { return o ? Object.values(o) : []; }
+
+function answerChips(a) {
+  const chips = [];
+  if (a.intent) chips.push(chip(`${a.intent.choice} ${Math.round(a.intent.probabilities[a.intent.choice] * 100)}`, ""));
+  if (a.topic) chips.push(chip(a.topic.choice, ""));
+  for (const k of ["hostile", "sarcasm", "bot"]) if (a[k]) chips.push(chip(`${k} ${Math.round(a[k].noul * 100)}%`, a[k].noul > 0.65 ? "hot" : a[k].noul > 0.4 ? "warm" : ""));
+  return chips;
+}
+
+// A score is a ladder, not a label: one step per level, the model's pick lit, height by probability.
+function answerMeters(a) {
+  return Object.entries(a).filter(([k, v]) => k !== "nsfw" && v?.type === "score").map(([k, v]) => meter(k, v));
+}
+
+function meter(name, a) {
+  const legend = levelsOf(a.legend);
+  const probs = levelsOf(a.probabilities);
+  const max = Math.max(0.01, ...probs);
+  const pick = Math.round(a.score);
+  const row = document.createElement("div");
+  row.className = "meter";
+  const steps = legend.map((lv, i) => {
+    const prob = Number(probs[i]) || 0;
+    return `<i class="${i === pick ? "on" : ""}" style="height:${Math.max(8, 100 * (prob / max)).toFixed(0)}%" title="${escapeHtml(String(lv))} ${Math.round(prob * 100)}%"></i>`;
+  }).join("");
+  row.innerHTML = `<span class="q">${escapeHtml(name)}</span><span class="steps">${steps}</span><span class="lv">${escapeHtml(String(legend[pick] ?? ""))}</span>`;
+  row.title = `${name}: ${legend[pick] ?? ""} · ${a.score.toFixed(1)} of ${Math.max(0, legend.length - 1)}`;
+  return row;
+}
+
 function chip(text, cls) { const s = document.createElement("span"); s.className = `chip ${cls}`; s.textContent = text; return s; }
 
 function askRow(p, q, spot) {
   const a = p.answers[q];
   const said = a.type === "noul" ? `${a.noul >= 0.5 ? "yes" : "no"} (${Math.round(Math.max(a.noul, 1 - a.noul) * 100)}%)`
     : a.type === "choice" ? `${a.choice} (${Math.round(a.probabilities[a.choice] * 100)}%)`
-    : a.legend[Math.round(a.score)];
+    : levelsOf(a.legend)[Math.round(a.score)];
   const row = document.createElement("div");
   row.className = "ask" + (spot ? " spot" : "");
   row.innerHTML = `<span>${spot ? "spot check · " : ""}<b>${q}?</b> model says <b>${escapeHtml(said)}</b></span>`;
@@ -519,6 +957,26 @@ function askRow(p, q, spot) {
   row.append(yes, no);
   return row;
 }
+
+// ---- badge ------------------------------------------------------------------
+
+$("badge-link").onclick = (e) => { e.preventDefault(); $("badge-snip").hidden = !$("badge-snip").hidden; };
+$("badge-img").onerror = () => { document.querySelector("footer .badge").style.display = "none"; };
+$("badge-copy").onclick = async () => {
+  const btn = $("badge-copy");
+  try {
+    await navigator.clipboard.writeText($("badge-md").textContent);
+    btn.textContent = "copied";
+  } catch {
+    const range = document.createRange();
+    range.selectNodeContents($("badge-md"));
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    btn.textContent = "select + copy";
+  }
+  setTimeout(() => { btn.textContent = "copy"; }, 1600);
+};
 
 connect();
 drawBaro();
