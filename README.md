@@ -9,6 +9,8 @@ milliseconds, for about three thousandths of a cent per post.
 
 Live at [cloutmetrics.ai](https://cloutmetrics.ai).
 
+![cloutmetrics.ai judging the firehose](public/og.png)
+
 The interesting part is not that a model can label posts. It is that this one
 says how sure it is, and the page routes on that: anything the model would not
 commit to slides into a second lane labelled "needs a human". You can watch it
