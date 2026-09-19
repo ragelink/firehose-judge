@@ -105,13 +105,13 @@ header { padding: 16px 16px 12px; border-bottom: 1px solid var(--line); }
 .calib-foot { font: 11px var(--mono); color: var(--muted); margin-top: 6px; }
 
 /* sidebar feed */
-.sidebar { min-width: 0; }
-.tabs { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
+.sidebar { min-width: 0; display: flex; flex-direction: column; position: sticky; top: 12px; align-self: start; max-height: calc(100vh - 24px); }
+.tabs { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; flex: none; }
 .tab { background: var(--panel); border: 1px solid var(--line); color: var(--text-2); font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .08em; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
 .tab.active { color: var(--text); border-color: var(--text-2); }
 .tab .count { color: var(--review); margin-left: 4px; }
 .tabs .hint { margin-left: auto; }
-.cards { display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 220px); overflow-y: auto; padding-right: 2px; }
+.cards { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-right: 2px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; animation: drop .35s ease-out; }
 @keyframes drop { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
 .card.review { border-color: rgba(230,103,103,.4); }
@@ -134,6 +134,7 @@ footer > a:last-child { margin-left: auto; }
 
 @media (max-width: 1200px) {
   .layout { grid-template-columns: 1fr; }
+  .sidebar { position: static; max-height: none; }
   .cards { max-height: 70vh; }
 }
 @media (max-width: 820px) {
